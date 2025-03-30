@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#ffffff" />
+  <link rel="manifest" href="manifest.json" />
+  <title>DOCX Reader PWA</title>
+  <style>
+    :root {
+      --bg-color: #ffffff;
+      --text-color: #000000;
+      --header-bg: #4a90e2;
+      --nav-bg: #f0f0f0;
+      --button-bg: #ffffff;
+      --button-text: #000000;
+      --font-size: 18px;
+    }
+
+    .dark-mode {
+      --bg-color: #121212;
+      --text-color: #ffffff;
+      --header-bg: #1e1e1e;
+      --nav-bg: #2c2c2c;
+      --button-bg: #2c2c2c;
+      --button-text: #ffffff;
+    }
+
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      transition: background-color 0.3s, color 0.3s;
+    }
+
+    header {
+      position: relative;
+      padding: 0.5rem;
+      background: var(--header-bg);
+      color: var(--text-color);
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: flex-start;
+      overflow-x: auto;
+      gap: 0.5rem;
+    }
+
+    header h1 {
+      margin: 0.5rem 0;
+      font-size: 1.2rem;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    header input[type="file"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      max-width: calc(100% - 3rem);
+    }
+
+    #settingsToggle {
+      position: absolute;
+      right: 0.5rem;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 1.5rem;
+      background: none;
+      border: none;
+      color: white;
+      cursor: pointer;
+    }
+
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      font-size: var(--font-size);
+      line-height: 1.6;
+      background-color: var(--button-bg);
+      border-radius: 12px;
+      margin: 1rem;
+      width: calc(100% - 2rem);
+      box-sizing: border-box;
+      text-align: justify;
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      padding: 0.5rem 1rem;
+      background: var(--nav-bg);
+    }
+
+    button {
+      font-size: 1.1rem;
+      padding: 0.5rem 1rem;
+      background-color: var(--button-bg);
+      color: var(--button-text);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      flex: 1 0 45%;
+      margin: 0.25rem 0;
+    }
+
+    #settingsPanel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 80%;
+      max-width: 300px;
+      height: 100%;
+      background-color: var(--nav-bg);
+      color: var(--text-color);
+      padding: 1rem;
+      box-shadow: -2px 0 5px rgba(0,0,0,0.2);
+      transition: transform 0.3s ease-in-out;
+      transform: translateX(100%);
+      z-index: 1000;
+    }
+
+    #settingsPanel.open {
+      transform: translateX(0);
+    }
+
+    #settingsOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.3);
+      display: none;
+      z-index: 999;
+    }
+
+    #settingsOverlay.show {
+      display: block;
+    }
+
+    .settings-group {
+      margin-top: 1rem;
+    }
+
+    @media (max-width: 600px) {
+      header h1 {
+        font-size: 1rem;
+      }
+
+      button {
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <input type="file" accept=".docx" id="upload" />
+    <button id="settingsToggle">☰</button>
+  </header>
+  <main id="content"></main>
+  <nav>
+    <button id="prev">⬅️ Back</button>
+    <button id="next">Next ➡️</button>
+  </nav>
+
+  <div id="settingsOverlay"></div>
+  <div id="settingsPanel">
+    <h2>Settings</h2>
+    <div class="settings-group">
+      <label>
+        <input type="checkbox" id="darkModeToggle" /> Dark Mode
+      </label>
+    </div>
+    <div class="settings-group">
+      <label for="fontSize">Font Size: </label>
+      <input type="range" id="fontSize" min="12" max="30" />
+    </div>
+    <div class="settings-group">
+      <label for="textDensity">Text Density: </label>
+      <input type="range" id="textDensity" min="0.5" max="5" step="0.01" />
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
+  <script>
+    let chunks = [], currentIndex = 0, fullText = [], currentFileName = '';
+
+    const contentEl = document.getElementById('content');
+    const uploadEl = document.getElementById('upload');
+    const nextBtn = document.getElementById('next');
+    const prevBtn = document.getElementById('prev');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const settingsOverlay = document.getElementById('settingsOverlay');
+    const settingsToggle = document.getElementById('settingsToggle');
+    const darkModeToggle = document.getElementById('darkModeToggle');
+    const fontSizeSlider = document.getElementById('fontSize');
+    const textDensitySlider = document.getElementById('textDensity');
+
+    function applySettings() {
+      const darkMode = localStorage.getItem('darkMode') === 'true';
+      const fontSize = localStorage.getItem('fontSize') || '18';
+      const textDensity = localStorage.getItem('textDensity') || '1';
+
+      document.body.classList.toggle('dark-mode', darkMode);
+      darkModeToggle.checked = darkMode;
+      document.documentElement.style.setProperty('--font-size', fontSize + 'px');
+      fontSizeSlider.value = fontSize;
+      textDensitySlider.value = textDensity;
+    }
+
+    uploadEl.addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      currentFileName = file.name;
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer });
+      const text = result.value.replace(/<[^>]+>/g, '');
+
+      fullText = text.split(/\s+/);
+      chunkText();
+
+      const savedPage = localStorage.getItem('docPage_' + currentFileName);
+      if (savedPage) {
+        currentIndex = parseInt(savedPage);
+      }
+
+      displayChunk();
+      localStorage.setItem('lastDoc', currentFileName);
+    });
+
+    function chunkText() {
+      const wordsPerChunk = estimateWordsPerChunk();
+      const savedPage = localStorage.getItem('docPage_' + currentFileName);
+      chunks = [];
+      for (let i = 0; i < fullText.length; i += wordsPerChunk) {
+        chunks.push(fullText.slice(i, i + wordsPerChunk).join(' '));
+      }
+      if (savedPage && !isNaN(savedPage)) {
+        currentIndex = Math.min(parseInt(savedPage), chunks.length - 1);
+      } else {
+        currentIndex = 0;
+      }
+    }
+
+    function estimateWordsPerChunk() {
+      const fontSize = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--font-size')) || 18;
+      const height = window.innerHeight - 200;
+      const lineHeight = 1.6 * fontSize;
+      const linesPerScreen = Math.floor(height / lineHeight);
+      const wordsPerLine = 8;
+      const density = parseFloat(localStorage.getItem('textDensity') || '1');
+      return Math.floor(linesPerScreen * wordsPerLine * density);
+    }
+
+    function displayChunk() {
+      if (chunks.length === 0) {
+        contentEl.innerText = 'No content loaded.';
+      } else {
+        contentEl.innerText = chunks[currentIndex];
+        if (currentFileName) {
+          localStorage.setItem('docPage_' + currentFileName, currentIndex);
+        }
+      }
+    }
+
+    nextBtn.onclick = () => {
+      if (currentIndex < chunks.length - 1) {
+        currentIndex++;
+        displayChunk();
+        if (currentFileName) localStorage.setItem('docPage_' + currentFileName, currentIndex);
+      }
+    };
+
+    prevBtn.onclick = () => {
+      if (currentIndex > 0) {
+        currentIndex--;
+        displayChunk();
+        if (currentFileName) localStorage.setItem('docPage_' + currentFileName, currentIndex);
+      }
+    };
+
+    settingsToggle.onclick = () => {
+      settingsPanel.classList.toggle('open');
+      settingsOverlay.classList.toggle('show');
+    };
+
+    settingsOverlay.onclick = () => {
+      settingsPanel.classList.remove('open');
+      settingsOverlay.classList.remove('show');
+    };
+
+    darkModeToggle.onchange = (e) => {
+      localStorage.setItem('darkMode', e.target.checked);
+      document.body.classList.toggle('dark-mode', e.target.checked);
+    };
+
+    fontSizeSlider.oninput = (e) => {
+      const size = e.target.value;
+      document.documentElement.style.setProperty('--font-size', size + 'px');
+      localStorage.setItem('fontSize', size);
+      chunkText();
+      displayChunk();
+    };
+
+    textDensitySlider.oninput = (e) => {
+      const density = e.target.value;
+      localStorage.setItem('textDensity', density);
+      chunkText();
+      displayChunk();
+    };
+
+    applySettings();
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
